@@ -1,0 +1,430 @@
+<?php
+
+// External SQL
+
+$link = mysql_connect('LOCAL IP ADDRESS', 'DB LOGIN', 'DB PASSWORD');
+mysql_select_db('DB NAME');
+mysql_query("SET character_set_results = 'utf8', character_set_client = 'utf8', character_set_connection = 'utf8', character_set_database = 'utf8', character_set_server = 'utf8'", $link);
+if (!$link) { echo "<h2>MySQL error</h2>"; exit(); }
+
+// output 
+// ----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+$collection_id = 1; 
+
+// entity meta
+
+if ($archive_action=="entity_meta" AND $entity_id)
+	{
+	$entity_meta = get_entity_meta($entity_id); 
+	$entity_objects = get_entity_objects($entity_id); // print_r($entity_objects); // test
+	$entity_objects = array_orderby($entity_objects, 'date', SORT_DESC);
+	foreach ($entity_objects as $key => $value) 
+		{
+		$tmp_meta = ""; $c="";
+		$object_id = $value[id];
+		$object_meta = get_object_meta($object_id); 
+
+		$entity_objects_c .= "<div class=\"db_item\">";
+		$entity_objects_c .= "<div class=\"content_left\">";
+		// pin
+		$entity_objects_c .= get_object_pin($object_id);
+		// title
+		$entity_objects_c .= "<p class=\"item_title\" id=\"work_".$object_id."\">$value[name]</p>"; 
+		// meta
+		if ($object_meta[dc_format_text]) { $tmp_meta .= $c.$object_meta[dc_format_text]; $c=", "; }
+		if ($object_meta[date] AND $object_meta[date]!="undated") 
+			{ 
+			if (strlen($object_meta[date])>4) { $tmp_meta .= $c.date("Y", strtotime($object_meta[date])); }
+			else { $tmp_meta .= $c.$object_meta[date]; }
+			$c=", "; 
+			}
+		if ($object_meta[duration]) 
+			{ 
+			$tmp_duration = "";
+			$tmp_tc = explode(":", $object_meta[duration]);
+			if ($tmp_tc[0]>0) { $tmp_duration .= floatval($tmp_tc[0])." hod "; }
+			if ($tmp_tc[1]>0) { $tmp_duration .= floatval($tmp_tc[1])." min "; }
+			if ($tmp_tc[2]>0) { $tmp_duration .= floatval($tmp_tc[2])." sec "; }
+			$tmp_meta .= $c.$tmp_duration; 
+			$c=", "; 
+			}
+		$entity_objects_c .= "<p class=\"item_meta\">".get_object_type($object_id)."<br /><em>$tmp_meta</em></p>";
+		$entity_objects_c .= "</div>";
+		$entity_objects_c .= "<div class=\"content_right\">";
+		if ($object_meta[description]) 
+			{ 
+			if (strlen($object_meta[description])>750) { $object_meta[description] = "<span class=\"fade hide\">$object_meta[description]</span>"; }
+			$entity_objects_c .= "<p class=\"text art\">$object_meta[description]</p>"; 
+			}
+		
+		$entity_objects_tmp = object_representations_f2($object_id);
+		// docs
+		if ($entity_objects_tmp[documents]) { $entity_objects_c .= "<ul>$entity_objects_tmp[documents]</ul>"; }
+		// images
+		if ($entity_objects_tmp[images]) { $entity_objects_c .= "<div class=\"page_gallery_container\"><div class=\"page_gallery\">$entity_objects_tmp[images]</div></div>"; }
+		// video
+		// if ($entity_objects_tmp[video]) { $entity_objects_c .= "$entity_objects_tmp[video]"; }
+		$entity_objects_c .= "</div>";
+		$entity_objects_c .= "</div>";
+		}
+	$data[c_entity_objects] = "<h2>".$entity_meta[displayname]." – <br />Práce v archivu CAS<br /><br /></h2>$entity_objects_c";
+
+	$archive_data = "$data[c_entity_objects]";
+	}
+
+// list submissions (all entities)
+
+if (!$archive_action OR $archive_action=="submissions")
+	{
+	$data[c_entity_list] = get_collection_entities($collection_id); 
+	asort($data[c_entity_list]); // a-z
+	foreach ($data[c_entity_list] as $key => $value) 
+		{ 
+		$entity_meta = get_entity_meta($key);
+		if ($entity_meta[famustudent]) { $entity_meta[famustudent] = "&nbsp;(".$entity_meta[famustudent].")"; } else continue;
+		if (get_entity_objects($entity_meta[id]))
+			{
+			if ($entity_meta[student_status]) { $data[c_entity_names_current] .= "<li><a href=\"?archive_action=entity_meta&entity_id=$entity_meta[id]&page=$page\">".$value[displayname].$entity_meta[famustudent]."</a></li>"; } 
+			else { $data[c_entity_names_past] .= "<li><a href=\"?archive_action=entity_meta&entity_id=$entity_meta[id]&page=$page\">".$value[displayname].$entity_meta[famustudent]."</a></li>"; } 
+			}
+		else  
+			{
+			if ($entity_meta[student_status]) { $data[c_entity_names_current] .= "<li>".$value[displayname].$entity_meta[famustudent]."</li>"; } 
+			else { $data[c_entity_names_past] .= "<li>".$value[displayname].$entity_meta[famustudent]."</li>"; } 
+			}
+		}
+	$data[c_entity_names_current] = "<ul>$data[c_entity_names_current]</ul>";
+	$data[c_entity_names_past] = "<ul>$data[c_entity_names_past]</ul>";
+	$archive_data = "
+	<div class=\"content_left50\">
+	<h2>Současní studenti</h2>".
+	$data[c_entity_names_current].
+	"</div>".
+	"<div class=\"content_right50\"><h2>Historie</h2>".
+	$data[c_entity_names_past]."
+	</div>";
+	}
+
+// main output
+
+echo "<div id=\"db_content_container\">\n<div id=\"db_content\">\n";
+echo $archive_data;
+echo "\n</div>\n</div>\n";
+
+// --------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// functions
+
+
+// returns all entities in collection (id, names)
+function get_collection_entities($collection_id)
+	{
+	$q = mysql_query("SELECT entity_id FROM ca_entities_x_collections WHERE collection_id = $collection_id"); // all entities in collection
+	while ($r=mysql_fetch_array($q)) 
+		{
+		if (!entity_deleted($r[entity_id]))
+			{
+			$rr=mysql_fetch_array(mysql_query("SELECT * FROM ca_entity_labels WHERE entity_id=$r[entity_id]")); // collect meta
+			$output[$rr[entity_id]][sort] = remdiak($rr[surname]); // sort by this column
+			$output[$rr[entity_id]][id] = $rr[entity_id];
+			$output[$rr[entity_id]][displayname] = $rr[displayname];
+			$output[$rr[entity_id]][forename] = $rr[forename];
+			$output[$rr[entity_id]][surname] = $rr[surname];
+			}
+		}
+	return ($output);
+	}
+
+// is entity alive?
+function entity_deleted($entity_id)
+	{
+	$r=mysql_fetch_array(mysql_query("SELECT deleted FROM ca_entities WHERE entity_id=$entity_id")); // is deleted?
+	if ($r[deleted]==1) { return TRUE; } else { return FALSE; };
+	}
+
+// is object alive?
+function object_deleted($object_id)
+	{
+	$r=mysql_fetch_array(mysql_query("SELECT deleted FROM ca_objects WHERE object_id=$object_id")); // is deleted?
+	if ($r[deleted]==1) { return TRUE; } else { return FALSE; };
+	}
+
+// get object type by ID
+function get_object_type($object_id)
+	{
+	$r=mysql_fetch_array(mysql_query("SELECT type_id FROM ca_objects WHERE object_id=$object_id")); // is deleted?
+	$obj_name[21]="film/video";
+	$obj_name[22]="instalace";
+	$obj_name[23]="software";
+	$obj_name[24]="zvuk";
+	$obj_name[25]="fotografie";
+	$obj_name[26]="text";
+	$obj_name[27]="performance";
+	return ($obj_name[$r[type_id]]);
+	}
+
+// returns all entities in collection via works (id, names)
+function get_collection_objects_entities($collection_id)
+	{
+	$q = mysql_query("SELECT object_id FROM ca_objects_x_collections WHERE collection_id = $collection_id"); // all objects in collection
+	while ($r=mysql_fetch_array($q)) 
+		{
+		$eq = mysql_query("SELECT * FROM ca_objects_x_entities WHERE object_id=$r[object_id]"); // all entities from each object
+		while ($er=mysql_fetch_array($eq)) 
+			{
+			if (!entity_deleted($er[entity_id]))
+				{
+				$rr=mysql_fetch_array(mysql_query("SELECT * FROM ca_entity_labels WHERE entity_id=$er[entity_id]")); // collect meta
+				$output[$rr[entity_id]][sort] = $rr[surname]; // sort by this column
+				$output[$rr[entity_id]][id] = $rr[entity_id];
+				$output[$rr[entity_id]][displayname] = $rr[displayname];
+				$output[$rr[entity_id]][forename] = $rr[forename];
+				$output[$rr[entity_id]][surname] = $rr[surname];
+				}
+			}
+		}
+	return ($output);
+	}
+
+// returns single entity meta
+function get_entity_meta($entity_id)
+	{
+	// basic meta
+	$rr=mysql_fetch_array(mysql_query("SELECT * FROM ca_entity_labels WHERE entity_id=$entity_id"));
+	$output[id] = $rr[entity_id];
+	$output[displayname] = $rr[displayname];
+	$output[forename] = $rr[forename];
+	$output[surname] = $rr[surname];
+	// attributes
+	$aq = mysql_query("SELECT * FROM ca_attributes WHERE row_id=$entity_id AND table_num=20"); // 20 = entities
+	while ($ar=mysql_fetch_array($aq)) 
+		{
+		$cr=mysql_fetch_array(mysql_query("SELECT * FROM ca_attribute_values WHERE attribute_id=$ar[attribute_id]"));
+		$er=mysql_fetch_array(mysql_query("SELECT * FROM ca_metadata_elements  WHERE element_id=$ar[element_id]"));
+		
+		// student (range)
+		if ($er[element_code]=="famustudent" AND $output[$er[element_code]]) 
+			{ 
+			if ($output[$er[element_code]]<$cr[value_longtext1]) { $output[$er[element_code]] = $output[$er[element_code]]."–".$cr[value_longtext1]; }
+			if ($output[$er[element_code]]>$cr[value_longtext1]) { $output[$er[element_code]] = $cr[value_longtext1]."–".$output[$er[element_code]]; }
+			}
+		else
+			{
+			$output[$er[element_code]] = $cr[value_longtext1];
+			}
+
+		// is current student?
+		if ($er[element_code]=="student_status" AND $cr[value_longtext1]==111) { $output[student_status] = false; }
+		}
+	if ($output[famustudent] AND strpos($output[famustudent], "–")==false AND $output[student_status]) { $output[famustudent] = "$output[famustudent]–"; }
+	return ($output);
+	}
+
+// returns single entity objects (basic)
+function get_entity_objects($entity_id)
+	{
+	$q = mysql_query("SELECT * FROM ca_objects_x_entities WHERE entity_id=$entity_id"); 
+	while ($r=mysql_fetch_array($q)) 
+		{
+		$cr = mysql_fetch_array(mysql_query("SELECT object_id, collection_id FROM ca_objects_x_collections WHERE object_id=$r[object_id]")); // all objects in collection
+		if (!object_deleted($r[object_id]) AND $cr[collection_id]==1) // only form collection no. 1
+			{
+			$rr=mysql_fetch_array(mysql_query("SELECT * FROM ca_object_labels WHERE object_id=$r[object_id]")); // collect meta
+			$output[$rr[object_id]][id] = $rr[object_id];
+			$output[$rr[object_id]][name] = $rr[name];
+			// year for sort
+			$tmp_meta = get_object_meta($rr[object_id]);
+			if (!is_numeric($tmp_meta[date])) { $tmp_meta[date]=0; }
+			$output[$rr[object_id]][date] = $tmp_meta[date];
+			}
+		}
+	return($output);
+	}
+
+// returns object meta (full meta)
+function get_object_meta($object_id)
+	{
+	
+	$dc_format[148] = "objekt";
+	$dc_format[149] = "aplikace";
+	$dc_format[150] = "audio";
+	$dc_format[151] = "obraz";
+	$dc_format[152] = "text";
+	$dc_format[153] = "video";
+
+	// basic meta
+	$rr=mysql_fetch_array(mysql_query("SELECT * FROM ca_object_labels WHERE object_id=$object_id"));
+	$output[id] = $rr[object_id];
+	$output[name] = $rr[name];
+	// attributes
+	$aq = mysql_query("SELECT * FROM ca_attributes WHERE row_id=$object_id AND table_num=57");  // 57 = objects
+	while ($ar=mysql_fetch_array($aq)) 
+		{
+		$cr=mysql_fetch_array(mysql_query("SELECT * FROM ca_attribute_values WHERE attribute_id=$ar[attribute_id]"));
+		$er=mysql_fetch_array(mysql_query("SELECT * FROM ca_metadata_elements  WHERE element_id=$ar[element_id]"));
+		$cr[value_longtext1] = strip_tags($cr[value_longtext1]);
+		$cr[value_longtext1] = str_replace("\n", "", $cr[value_longtext1]);
+		$output[$er[element_code]] = $cr[value_longtext1];
+		if ($ar[element_id]==41) { $output[dc_format_text] .= $c.$dc_format[$cr[value_longtext1]]; $c=", "; } // dc format
+		if ($ar[element_id]==61) { $output[duration] = $c.$dc_format[$cr[value_longtext1]]; $c=", "; } // duration
+		// $output[data].="<li><strong>$er[element_code] [$ar[element_id]]</strong> > $cr[value_longtext1]</li>"; // check names
+		}
+	return ($output);
+	}
+
+// returns object representations
+function get_object_representations($object_id)
+	{
+	$qq = mysql_query("SELECT * FROM ca_objects_x_object_representations WHERE object_id=$object_id");
+	while ($rr=mysql_fetch_array($qq))
+		{
+		
+		// media
+		$mr = mysql_fetch_array(mysql_query("SELECT media, access FROM ca_object_representations WHERE (access=1 OR access=2) AND representation_id=$rr[representation_id]")); 
+ 		$data = unserialize(gzuncompress($mr[media]));
+		$lr = mysql_fetch_array(mysql_query("SELECT * FROM ca_object_representation_labels WHERE representation_id=$rr[representation_id]")); 
+ 		
+ 		// access
+ 		$output[$rr[representation_id]][access] = $mr[access];
+
+ 		// name
+ 		$output[$rr[representation_id]][name] = $lr[name];
+
+ 		// primary 1/0
+ 		$output[$rr[representation_id]][is_primary] = $rr[is_primary];
+
+ 		// attributes / caption
+ 		$ar = mysql_fetch_array(mysql_query("SELECT * FROM ca_attributes WHERE row_id=$rr[representation_id] AND table_num=56 AND element_id=24"));  // 56 = representations, 24 = caption
+		$cr = mysql_fetch_array(mysql_query("SELECT * FROM ca_attribute_values WHERE attribute_id=$ar[attribute_id]")); 
+		$output[$rr[representation_id]][data] = $cr[value_longtext1];
+
+ 		// attributes / year
+ 		$ar = mysql_fetch_array(mysql_query("SELECT * FROM ca_attributes WHERE row_id=$rr[representation_id] AND table_num=56 AND element_id=24"));  // 56 = representations, 34 = date
+		$cr = mysql_fetch_array(mysql_query("SELECT * FROM ca_attribute_values WHERE attribute_id=$ar[attribute_id]")); 
+		$output[$rr[representation_id]][year] = $cr[value_longtext1];
+
+ 		// images
+ 		if (strstr($data[original][MIMETYPE], "image") OR strstr($data[original][MIMETYPE], "video")) 
+ 			{ 
+ 			$output[$rr[representation_id]][image] = $data[large][HASH]."/".$data[large][MAGIC]."_".$data[large][FILENAME];  // preview image url
+	 		}
+
+	 	// documents
+ 		if (strstr($data[original][MIMETYPE], "msword") OR strstr($data[original][MIMETYPE], "pdf") ) 
+			{ 
+			$output[$rr[representation_id]][document] = $data[original][HASH]."/".$data[original][MAGIC]."_".$data[original][FILENAME];  // document location 
+			$output[$rr[representation_id]][ext] = $data[original][EXTENSION];  // document ext 			
+	 		}
+
+	 	// video
+ 		if (strstr($data[original][MIMETYPE], "video")) 
+			{ 
+			$output[$rr[representation_id]][video] = $data[original][HASH]."/".$data[original][MAGIC]."_".$data[original][FILENAME];  // document location 
+			$output[$rr[representation_id]][ext] = $data[original][EXTENSION];  // document ext 	
+	 		}
+	 	}
+	 return ($output);
+	}
+
+
+// print object representation (formated)
+function object_representations_f($object_id)
+	{
+	$img_pool = "http://ca.test.amu.cz/media/collectiveaccess/images";
+	$object_representations = get_object_representations($object_id); 
+	$object_meta = get_object_meta($object_id); 
+	foreach ($object_representations as $key => $value) 
+		{
+		if ($value[image] AND strlen($value[image])>5)
+			{ 
+			$img_path = "$img_pool/$value[image]";
+			$object_representations_c[images] .= "<div class=\"page_gallery_item\"><a href=\"$img_path\" rel=\"fancybox-thumb\" class=\"fancybox-thumb\"><img alt=\"$value[name] – $value[data]\" title=\"$value[name] – $value[data]\" src=\"$img_path\" /></a></div>"; 
+			}
+		if ($value[document])
+			{
+			if (!$value[name]) { $value[name] = "Dokument"; }
+			if ($value[data]) { $value[data] = " – $value[data]"; }
+			$object_representations_c[documents] .= "<li><a href=\"$img_pool/$value[document]\">$value[name]</a> [$value[ext]] $value[data]</li>"; 
+			}
+		if ($value[video])
+			{
+			if (!$value[name]) { $value[name] = "Video"; }
+			$object_representations_c[video] .= "<p>Video > <a href=\"media/collectiveaccess/quicktime/$value[video]\">$value[name]</a> [$value[ext]] – <em>$value[video]</em></p>"; 
+			}
+		}
+	return($object_representations_c);
+	}	
+
+// print object representation (formated - version 2)
+function object_representations_f2($object_id)
+	{
+	$img_pool = "http://ca.test.amu.cz/media/collectiveaccess/images";
+	$object_representations = get_object_representations($object_id); 
+	$object_meta = get_object_meta($object_id); 
+	foreach ($object_representations as $key => $value) 
+		{
+		if ($value[name]=="[BLANK]") { $value[name]=""; }
+		if ($value[name] AND $value[data]) { $value[name] = "$value[name] – $value[data]"; }
+		$img_path = "$img_pool/$value[image]";
+		if ($value[image] AND strlen($value[image])>5 AND ($value[access]==2 OR $value[access]==1))
+			{ 
+			$object_representations_c[images] .= "<a class=\"image_ico fancybox-thumb\" rel=\"obj-$object_id\" href=\"$img_path\" target=\"_blank\" title=\"$value[name]\">JPG</a>"; // link
+			}
+		}
+	$object_representations_c[images] = $object_representations_c[images];
+	if ($object_representations_c[images]) { $object_representations_c[images] = "<div class=\"small_label\">FOTOGRAFIE</div>".$object_representations_c[images]; }
+	return($object_representations_c);
+	}	
+
+
+// get pin image (from object id)
+function get_object_pin($object_id)
+	{
+	$img_pool = "http://ca.test.amu.cz/media/collectiveaccess/images";
+	$object_representations = get_object_representations($object_id); 
+	$object_meta = get_object_meta($object_id); 
+	foreach ($object_representations as $key => $value) 
+		{
+		if ($value[image] AND strlen($value[image])>5 AND $value[is_primary]==1)
+			{
+			if ($value[name]=="[BLANK]") { $value[name]=""; }
+			if ($value[name] AND $value[data]) { $value[name] = "$value[name] – $value[data]"; }
+			$img_path = "$img_pool/$value[image]";
+			$object_representations_c = "<a class=\"image_preview fancybox-thumb\" href=\"$img_path\" title=\"$value[name]\" target=\"_blank\"><img src=\"$img_path\" alt=\"$value[name]\" /></a>";  // preview
+			break;
+			}
+		}
+	if ($object_representations_c) { return($object_representations_c); }
+	}
+	
+// ------------------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------------------------------
+// general purpose functions
+// ------------------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------------------------------
+
+// sort multidimesional arrays
+function array_orderby()
+{
+    $args = func_get_args();
+    $data = array_shift($args);
+    foreach ($args as $n => $field) 
+    	{
+        if (is_string($field)) {
+            $tmp = array();
+            foreach ($data as $key => $row) { $tmp[$key] = $row[$field]; }
+            $args[$n] = $tmp;
+            }
+    	}
+    $args[] = &$data;
+    call_user_func_array('array_multisort', $args);
+    return array_pop($args);
+}
+
+// end of functions
+
+
+
+
+
+?>
